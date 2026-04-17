@@ -53,9 +53,9 @@ export class BoothRoom extends DurableObject {
 	}
 
 	private getGrid(): string[] {
-		const grid: string[] = new Array(64).fill('#FFFFFF');
+		const grid: string[] = new Array(64).fill('#000000');
 		for (const [cellIndex, colorMap] of this.votes) {
-			let bestColor = '#FFFFFF';
+			let bestColor = '#000000';
 			let bestScore = 0;
 			for (const [color, score] of colorMap) {
 				if (score > bestScore) {
@@ -185,7 +185,7 @@ export class BoothRoom extends DurableObject {
 			colorMap.set(color, (colorMap.get(color) ?? 0) + direction);
 			const newScore = colorMap.get(color)!;
 
-			let winner = '#FFFFFF';
+			let winner = '#000000';
 			let bestScore = 0;
 			for (const [c, s] of colorMap) {
 				if (s > bestScore) {

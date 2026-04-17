@@ -30,8 +30,8 @@
 
 	function getWinner(cellIndex: number): string {
 		const cellVotes = voteData[cellIndex];
-		if (!cellVotes) return '#FFFFFF';
-		let best = '#FFFFFF';
+		if (!cellVotes) return '#000000';
+		let best = '#000000';
 		let bestScore = 0;
 		for (const [color, score] of Object.entries(cellVotes)) {
 			if (score > bestScore) {

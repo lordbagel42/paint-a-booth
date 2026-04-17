@@ -27,7 +27,7 @@ SerialLogHandler logHandler(LOG_LEVEL_INFO);
 #define PIXEL_COUNT (MATRIX_WIDTH * MATRIX_HEIGHT)
 #define PIXEL_TYPE WS2812B
 // 1 = parse from MOCK_GRID_PAYLOAD, 0 = parse from live HTTP response body (TODO path below)
-#define USE_MOCK_GRID 1
+#define USE_MOCK_GRID 0
 
 // Runtime defaults before ledger sync
 const bool DEFAULT_MIRROR_X = false;
