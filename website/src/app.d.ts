@@ -4,22 +4,22 @@ import type { User, Session } from 'better-auth/minimal';
 // for information about these interfaces
 declare global {
 	namespace App {
-        interface Platform {
-            env: Env;
-            cf: CfProperties;
-            ctx: ExecutionContext;
-        }
+		interface Platform {
+			env: Env;
+			cf: CfProperties;
+			ctx: ExecutionContext;
+		}
 
-        interface Locals {
+		interface Locals {
 			user?: User;
 			session?: Session;
 		}
 
-        // interface Error {}
-        // interface PageData {}
-        // interface PageState {}
-        // interface Platform {}
-    }
+		// interface Error {}
+		// interface PageData {}
+		// interface PageState {}
+		// interface Platform {}
+	}
 }
 
 export {};
