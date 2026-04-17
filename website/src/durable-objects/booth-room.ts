@@ -18,7 +18,7 @@ interface Attachment {
 
 export class BoothRoom extends DurableObject {
 	private votes = new Map<number, Map<string, number>>();
-	private cursors = new Map<WebSocket, { clientId: string; cellIndex: number; color: string }>();
+	private cursors = new Map<WebSocket, { clientId: string; x: number; y: number; color: string }>();
 	private initialized = false;
 
 	constructor(ctx: DurableObjectState, env: Env) {
@@ -156,7 +156,7 @@ export class BoothRoom extends DurableObject {
 			if (!clientId) return;
 			const attachment: Attachment = { clientId, color };
 			ws.serializeAttachment(attachment);
-			this.cursors.set(ws, { clientId, cellIndex: -1, color });
+			this.cursors.set(ws, { clientId, x: -1, y: -1, color });
 			return;
 		}
 
@@ -207,16 +207,19 @@ export class BoothRoom extends DurableObject {
 		}
 
 		if (data.type === 'cursor') {
-			const cellIndex = Number(data.cellIndex);
-			if (isNaN(cellIndex) || cellIndex < -1 || cellIndex > 63) return;
+			const x = Number(data.x);
+			const y = Number(data.y);
+			if (isNaN(x) || isNaN(y)) return;
 			const cursor = this.cursors.get(ws);
 			if (!cursor) return;
-			cursor.cellIndex = cellIndex;
+			cursor.x = x;
+			cursor.y = y;
 			this.broadcast(
 				JSON.stringify({
 					type: 'cursor',
 					clientId: cursor.clientId,
-					cellIndex,
+					x,
+					y,
 					color: cursor.color
 				}),
 				ws

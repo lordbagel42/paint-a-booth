@@ -18,7 +18,7 @@
 	let grid: string[] = $state(data.grid);
 	let voteData: Record<number, Record<string, number>> = $state(data.voteData);
 	let selectedCell: number | null = $state(null);
-	let cursors = new SvelteMap<string, { cellIndex: number; color: string }>();
+	let cursors = new SvelteMap<string, { x: number; y: number; color: string }>();
 	let ws: WebSocket | null = $state(null);
 	let connected = $state(false);
 	const clientId = crypto.randomUUID().slice(0, 8);
@@ -73,7 +73,7 @@
 			}
 
 			if (msg.type === 'cursor') {
-				cursors.set(msg.clientId, { cellIndex: msg.cellIndex, color: msg.color });
+				cursors.set(msg.clientId, { x: msg.x, y: msg.y, color: msg.color });
 			}
 
 			if (msg.type === 'leave') {
@@ -116,26 +116,24 @@
 	}
 
 	function onCellPointerEnter(cellIndex: number) {
-		sendCursor(cellIndex);
 		if (isPainting) paintCell(cellIndex);
 	}
 
+	let gridEl: HTMLDivElement | undefined = $state();
 	let lastCursorSend = 0;
-	function sendCursor(cellIndex: number) {
+	function sendCursor(e: PointerEvent) {
 		const now = Date.now();
-		if (now - lastCursorSend < 50) return;
+		if (now - lastCursorSend < 33) return;
+		if (!gridEl) return;
 		lastCursorSend = now;
-		ws?.send(JSON.stringify({ type: 'cursor', cellIndex }));
+		const rect = gridEl.getBoundingClientRect();
+		const x = (e.clientX - rect.left) / rect.width;
+		const y = (e.clientY - rect.top) / rect.height;
+		ws?.send(JSON.stringify({ type: 'cursor', x, y }));
 	}
 
-	function getCursorsForCell(cellIndex: number): { clientId: string; color: string }[] {
-		const result: { clientId: string; color: string }[] = [];
-		for (const [id, cursor] of cursors) {
-			if (cursor.cellIndex === cellIndex) {
-				result.push({ clientId: id, color: cursor.color });
-			}
-		}
-		return result;
+	function sendCursorLeave() {
+		ws?.send(JSON.stringify({ type: 'cursor', x: -1, y: -1 }));
 	}
 
 	async function copyGrid() {
@@ -230,38 +228,57 @@
 	</div>
 
 	<!-- Grid -->
-	<div class="mb-6 flex justify-center">
+	<div class="relative mb-6 flex justify-center">
 		<div
-			class="inline-grid touch-none grid-cols-8 overflow-hidden rounded border border-neutral-400"
+			bind:this={gridEl}
+			class="relative inline-grid touch-none grid-cols-8 overflow-visible rounded border border-neutral-400"
+			onpointermove={sendCursor}
+			onpointerleave={sendCursorLeave}
 		>
 			{#each grid as color, i (i)}
-				{@const cellCursors = getCursorsForCell(i)}
 				<button
-					class="relative h-10 w-10 border border-neutral-300/50 sm:h-12 sm:w-12"
+					class="h-10 w-10 border border-neutral-300/50 sm:h-12 sm:w-12"
 					class:ring-2={selectedCell === i}
 					class:ring-blue-500={selectedCell === i}
 					class:z-20={selectedCell === i}
 					style="background-color: {color}"
 					onpointerdown={(e) => onCellPointerDown(i, e)}
 					onpointerenter={() => onCellPointerEnter(i)}
-					onpointerleave={() => sendCursor(-1)}
 					onclick={() => (selectedCell = selectedCell === i ? null : i)}
 					aria-label="Cell {Math.floor(i / 8)},{i % 8}"
-				>
-					{#if cellCursors.length > 0}
-						<div
-							class="pointer-events-none absolute inset-0 flex items-center justify-center gap-0.5"
+				></button>
+			{/each}
+
+			<!-- Remote cursors -->
+			{#each [...cursors] as [id, cursor] (id)}
+				{#if cursor.x >= 0 && cursor.y >= 0}
+					<div
+						class="pointer-events-none absolute z-50"
+						style="left: {cursor.x * 100}%; top: {cursor.y *
+							100}%; transition: left 80ms linear, top 80ms linear;"
+					>
+						<svg
+							width="20"
+							height="24"
+							viewBox="0 0 20 24"
+							fill="none"
+							xmlns="http://www.w3.org/2000/svg"
+							class="drop-shadow"
 						>
-							{#each cellCursors as cursor (cursor.clientId)}
-								<div
-									class="h-3 w-3 rounded-full border-2 border-white"
-									style="background-color: {cursor.color}"
-									title={cursor.clientId}
-								></div>
-							{/each}
-						</div>
-					{/if}
-				</button>
+							<path
+								d="M2 1L18 12L10 13L7 22L2 1Z"
+								fill={cursor.color}
+								stroke="white"
+								stroke-width="1.5"
+								stroke-linejoin="round"
+							/>
+						</svg>
+						<span
+							class="absolute top-5 left-3 rounded-full px-1.5 py-0.5 text-[9px] font-medium whitespace-nowrap text-white shadow"
+							style="background-color: {cursor.color}">{id.slice(0, 4)}</span
+						>
+					</div>
+				{/if}
 			{/each}
 		</div>
 	</div>
