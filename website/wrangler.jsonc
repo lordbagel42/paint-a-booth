@@ -16,6 +16,17 @@
 		"enabled": true
 	},
 	"upload_source_maps": true,
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "rmrrf",
+			"database_id": "7d4be746-de4f-4de4-864e-0c5028a62411"
+		}
+	],
+	"durable_objects": {
+		"bindings": [{ "name": "BOOTH_ROOM", "class_name": "BoothRoom" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["BoothRoom"] }],
 	"routes": [
 		{
 			"pattern": "rmrrf.raygen.dev",
