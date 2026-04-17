@@ -119,29 +119,30 @@
 	});
 </script>
 
-<div class="mx-auto max-w-lg px-4 py-8 select-none">
-	<h1 class="mb-2 text-center text-3xl font-bold">Paint-a-Booth</h1>
-	<p class="mb-4 text-center text-sm text-neutral-500">
-		{#if connected}
-			<span class="inline-block h-2 w-2 rounded-full bg-green-500"></span> Connected
-		{:else}
-			<span class="inline-block h-2 w-2 rounded-full bg-red-500"></span> Reconnecting…
-		{/if}
-	</p>
+<div class="mx-auto max-w-lg px-4 py-10 select-none">
+	<div class="mb-6 flex items-center justify-between">
+		<h1 class="font-mono text-lg font-bold tracking-tight">paint-a-booth</h1>
+		<span class="flex items-center gap-2 font-mono text-xs text-neutral-500">
+			{#if connected}
+				<span class="h-1.5 w-1.5 bg-green-400"></span>live
+			{:else}
+				<span class="h-1.5 w-1.5 bg-red-400"></span>reconnecting
+			{/if}
+		</span>
+	</div>
 
 	<!-- Grid -->
 	<div class="relative mb-6 flex justify-center">
 		<div
 			bind:this={gridEl}
-			class="relative inline-grid touch-none grid-cols-8 overflow-visible rounded border border-neutral-400"
+			class="relative inline-grid touch-none grid-cols-8 overflow-visible border border-neutral-800"
 			onpointermove={sendCursor}
 			onpointerleave={sendCursorLeave}
 		>
 			{#each grid as color, i (i)}
 				<button
-					class="h-10 w-10 border border-neutral-300/50 sm:h-12 sm:w-12"
-					class:ring-2={selectedCell === i}
-					class:ring-blue-500={selectedCell === i}
+					class="h-10 w-10 border border-neutral-800 transition-[border-color] hover:border-neutral-500 sm:h-12 sm:w-12"
+					class:border-white={selectedCell === i}
 					class:z-20={selectedCell === i}
 					style="background-color: {color}"
 					onclick={() => (selectedCell = selectedCell === i ? null : i)}
@@ -158,23 +159,22 @@
 							100}%; transition: left 80ms linear, top 80ms linear;"
 					>
 						<svg
-							width="20"
-							height="24"
+							width="18"
+							height="22"
 							viewBox="0 0 20 24"
 							fill="none"
 							xmlns="http://www.w3.org/2000/svg"
-							class="drop-shadow"
 						>
 							<path
 								d="M2 1L18 12L10 13L7 22L2 1Z"
 								fill={cursor.color}
-								stroke="white"
+								stroke="#0a0a0a"
 								stroke-width="1.5"
 								stroke-linejoin="round"
 							/>
 						</svg>
 						<span
-							class="absolute top-5 left-3 rounded-full px-1.5 py-0.5 text-[9px] font-medium whitespace-nowrap text-white shadow"
+							class="absolute top-4 left-3 px-1 py-px font-mono text-[8px] whitespace-nowrap text-white"
 							style="background-color: {cursor.color}">{id.slice(0, 4)}</span
 						>
 					</div>
@@ -184,42 +184,46 @@
 	</div>
 
 	{#if selectedCell !== null}
-		<div class="rounded-lg border border-neutral-300 bg-white p-4 shadow-sm">
+		<div class="border border-neutral-800 bg-[#111] p-4">
 			<div class="mb-3 flex items-center justify-between">
-				<h2 class="text-lg font-semibold">
-					Cell ({Math.floor(selectedCell / 8)}, {selectedCell % 8})
+				<h2 class="font-mono text-sm text-neutral-400">
+					cell[{selectedCell}]
+					<span class="text-neutral-600">({Math.floor(selectedCell / 8)}, {selectedCell % 8})</span>
 				</h2>
 				<button
-					class="text-neutral-400 hover:text-neutral-700"
+					class="font-mono text-xs text-neutral-600 hover:text-white"
 					onclick={() => (selectedCell = null)}
 					aria-label="Close">✕</button
 				>
 			</div>
-			<div class="grid gap-2">
+			<div class="grid gap-1">
 				{#each COLORS as { hex, name } (hex)}
 					{@const score = getScore(selectedCell, hex)}
-					<div class="flex items-center gap-3">
+					<div
+						class="flex items-center gap-3 border border-transparent px-2 py-1 hover:border-neutral-800"
+					>
 						<div
-							class="h-6 w-6 shrink-0 rounded border border-neutral-300"
+							class="h-5 w-5 shrink-0 border border-neutral-700"
 							style="background-color: {hex}"
 						></div>
-						<span class="w-16 text-sm">{name}</span>
+						<span class="w-14 font-mono text-xs text-neutral-400">{name}</span>
 						<span
-							class="w-8 text-center font-mono text-sm"
-							class:text-green-600={score > 0}
-							class:text-red-600={score < 0}>{score}</span
+							class="w-8 text-center font-mono text-xs"
+							class:text-green-400={score > 0}
+							class:text-red-400={score < 0}
+							class:text-neutral-600={score === 0}>{score}</span
 						>
 						<button
 							type="button"
-							class="rounded px-2 py-0.5 text-sm text-green-700 hover:bg-green-100"
+							class="px-2 py-0.5 font-mono text-xs text-neutral-500 hover:bg-neutral-800 hover:text-white"
 							aria-label="Upvote {name}"
-							onclick={() => vote(selectedCell!, hex, 1)}>▲</button
+							onclick={() => vote(selectedCell!, hex, 1)}>+</button
 						>
 						<button
 							type="button"
-							class="rounded px-2 py-0.5 text-sm text-red-700 hover:bg-red-100"
+							class="px-2 py-0.5 font-mono text-xs text-neutral-500 hover:bg-neutral-800 hover:text-white"
 							aria-label="Downvote {name}"
-							onclick={() => vote(selectedCell!, hex, -1)}>▼</button
+							onclick={() => vote(selectedCell!, hex, -1)}>−</button
 						>
 					</div>
 				{/each}
