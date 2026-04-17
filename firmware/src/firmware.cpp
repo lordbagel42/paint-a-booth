@@ -32,6 +32,11 @@ SerialLogHandler logHandler(LOG_LEVEL_INFO);
 // Runtime defaults before ledger sync
 const bool DEFAULT_MIRROR_X = false;
 const bool DEFAULT_MIRROR_Y = true;
+// Serpentine wiring direction for visual row 0 (top row before mirror transforms).
+// false = right-to-left first row, true = left-to-right first row.
+const bool SERPENTINE_ROW0_LEFT_TO_RIGHT = true;
+// Set to false for progressive row wiring (each row left->right), true for zig-zag/serpentine.
+const bool MATRIX_IS_SERPENTINE = false;
 const uint8_t DEFAULT_BRIGHTNESS = 64;
 const uint8_t MIN_BRIGHTNESS = 0;
 const uint8_t MAX_BRIGHTNESS = 255;
@@ -48,14 +53,14 @@ const uint8_t PIXEL_SLOT_LEN = 12;  // RRR.GGG.BBB,
 // Mock payload for now (replace with HTTP response body later).
 // Order is visual row-major: x=0..7, y=0..7.
 const char *MOCK_GRID_PAYLOAD =
-    "255.255.255,255.255.255,255.255.255,255.128.000,255.128.000,255.255.255,255.255.255,128.000.128,"
-    "255.255.255,255.255.255,255.255.255,255.000.000,255.000.000,255.255.255,255.255.255,255.255.255,"
-    "255.255.255,255.255.255,255.000.000,255.000.000,255.000.000,255.000.000,255.255.255,255.255.255,"
-    "255.255.255,255.255.255,255.000.000,255.255.255,255.255.255,255.000.000,255.255.255,255.255.255,"
-    "255.255.255,255.255.255,255.000.000,255.255.255,255.255.255,255.000.000,255.255.255,255.255.255,"
-    "255.255.255,255.255.255,255.000.000,255.000.000,255.000.000,255.000.000,255.255.255,255.255.255,"
-    "255.255.255,255.255.255,255.255.255,255.255.255,255.255.255,255.255.255,255.255.255,255.255.255,"
-    "000.000.255,255.255.255,255.255.255,255.255.255,255.255.255,255.255.255,255.255.255,000.255.000";
+    "000.000.000,000.000.000,000.000.000,000.000.000,000.000.000,000.000.000,000.000.000,000.000.000,"
+    "000.000.000,000.000.000,236.055.080,000.000.000,000.000.000,000.000.000,000.000.000,000.000.000,"
+    "000.000.000,000.000.000,236.055.080,000.000.000,000.000.000,000.000.000,000.000.000,000.000.000,"
+    "000.000.000,000.000.000,236.055.080,000.000.000,000.000.000,000.000.000,000.000.000,000.000.000,"
+    "000.000.000,000.000.000,236.055.080,236.055.080,236.055.080,236.055.080,000.000.000,000.000.000,"
+    "000.000.000,000.000.000,236.055.080,000.000.000,000.000.000,236.055.080,000.000.000,000.000.000,"
+    "000.000.000,000.000.000,236.055.080,000.000.000,000.000.000,236.055.080,000.000.000,000.000.000,"
+    "000.000.000,000.000.000,000.000.000,000.000.000,000.000.000,000.000.000,000.000.000,000.000.000";
 
 uint32_t Wheel(byte WheelPos);
 uint16_t xyToIndex(uint8_t x, uint8_t y);
@@ -95,7 +100,12 @@ void setup()
   strip.show();
 
   // Optional startup indicator until the first poll lands.
-  drawTargetPattern();
+  const uint32_t startupColor = strip.Color(180, 120, 255); // light purple
+  strip.setPixelColor(xyToIndex(3, 3), startupColor);
+  strip.setPixelColor(xyToIndex(3, 4), startupColor);
+  strip.setPixelColor(xyToIndex(4, 3), startupColor);
+  strip.setPixelColor(xyToIndex(4, 4), startupColor);
+  strip.show();
 
   // Cloud-to-device configuration ledger (keys: MIRROR_X, MIRROR_Y as 0/1)
   ledSettings = Particle.ledger("led-settings");
@@ -326,7 +336,8 @@ void drawTargetPattern()
 }
 
 // Convert visual XY coordinates to physical LED index for a horizontal serpentine matrix.
-// Assumes row 0 starts left->right, row 1 right->left, alternating per row.
+// Row direction alternates each row, with row 0 direction selected by
+// SERPENTINE_ROW0_LEFT_TO_RIGHT.
 uint16_t xyToIndex(uint8_t x, uint8_t y)
 {
   if (x >= MATRIX_WIDTH || y >= MATRIX_HEIGHT)
@@ -345,7 +356,12 @@ uint16_t xyToIndex(uint8_t x, uint8_t y)
   }
 
   uint16_t rowStart = y * MATRIX_WIDTH;
-  if (y & 0x01)
+  bool reverseRow = false;
+  if (MATRIX_IS_SERPENTINE)
+  {
+    reverseRow = SERPENTINE_ROW0_LEFT_TO_RIGHT ? ((y & 0x01) != 0) : ((y & 0x01) == 0);
+  }
+  if (reverseRow)
   {
     return rowStart + (MATRIX_WIDTH - 1 - x);
   }

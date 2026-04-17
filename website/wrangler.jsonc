@@ -20,7 +20,8 @@
 		{
 			"binding": "DB",
 			"database_name": "rmrrf",
-			"database_id": "7d4be746-de4f-4de4-864e-0c5028a62411"
+			"database_id": "7d4be746-de4f-4de4-864e-0c5028a62411",
+			"migrations_dir": "drizzle"
 		}
 	],
 	"durable_objects": {
