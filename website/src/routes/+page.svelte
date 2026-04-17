@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { SvelteMap } from 'svelte/reactivity';
+	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { COLORS } from '$lib/colors';
 
 	let { data } = $props();
@@ -23,6 +23,12 @@
 	let connected = $state(false);
 	const clientId = crypto.randomUUID().slice(0, 8);
 	const cursorColor = CURSOR_COLORS[Math.floor(Math.random() * CURSOR_COLORS.length)];
+
+	// Drag-to-paint state
+	let brushColor: string = $state(COLORS[0].hex);
+	let isPainting = $state(false);
+	let paintedCells = new SvelteSet<number>();
+	let copyMessage = $state('');
 
 	function getScore(cellIndex: number, hex: string): number {
 		return voteData[cellIndex]?.[hex] ?? 0;
@@ -96,6 +102,24 @@
 		ws?.send(JSON.stringify({ type: 'vote', cellIndex, color, direction }));
 	}
 
+	function paintCell(cellIndex: number) {
+		if (paintedCells.has(cellIndex)) return;
+		paintedCells.add(cellIndex);
+		vote(cellIndex, brushColor, 1);
+	}
+
+	function onCellPointerDown(cellIndex: number, e: PointerEvent) {
+		if (e.button !== 0) return;
+		isPainting = true;
+		paintedCells = new SvelteSet();
+		paintCell(cellIndex);
+	}
+
+	function onCellPointerEnter(cellIndex: number) {
+		sendCursor(cellIndex);
+		if (isPainting) paintCell(cellIndex);
+	}
+
 	let lastCursorSend = 0;
 	function sendCursor(cellIndex: number) {
 		const now = Date.now();
@@ -114,17 +138,54 @@
 		return result;
 	}
 
+	async function copyGrid() {
+		await navigator.clipboard.writeText(JSON.stringify(grid));
+		copyMessage = 'Copied!';
+		setTimeout(() => (copyMessage = ''), 2000);
+	}
+
+	async function pasteGrid() {
+		try {
+			const text = await navigator.clipboard.readText();
+			const parsed = JSON.parse(text);
+			if (!Array.isArray(parsed) || parsed.length !== 64) {
+				copyMessage = 'Invalid grid data';
+				setTimeout(() => (copyMessage = ''), 2000);
+				return;
+			}
+			for (let i = 0; i < 64; i++) {
+				const color = parsed[i];
+				if (typeof color === 'string' && color.startsWith('#') && color !== grid[i]) {
+					vote(i, color, 1);
+				}
+			}
+			copyMessage = 'Pasted!';
+			setTimeout(() => (copyMessage = ''), 2000);
+		} catch {
+			copyMessage = 'Paste failed';
+			setTimeout(() => (copyMessage = ''), 2000);
+		}
+	}
+
 	$effect(() => {
 		connect();
 		return () => {
 			ws?.close();
 		};
 	});
+
+	$effect(() => {
+		function onPointerUp() {
+			isPainting = false;
+		}
+		window.addEventListener('pointerup', onPointerUp);
+		return () => window.removeEventListener('pointerup', onPointerUp);
+	});
 </script>
 
-<div class="mx-auto max-w-lg px-4 py-8">
+<div class="mx-auto max-w-lg px-4 py-8 select-none">
 	<h1 class="mb-2 text-center text-3xl font-bold">Paint-a-Booth</h1>
-	<p class="mb-6 text-center text-sm text-neutral-500">
+	<p class="mb-4 text-center text-sm text-neutral-500">
 		{#if connected}
 			<span class="inline-block h-2 w-2 rounded-full bg-green-500"></span> Connected
 		{:else}
@@ -132,20 +193,59 @@
 		{/if}
 	</p>
 
+	<!-- Brush palette -->
+	<div class="mb-3 flex flex-wrap items-center justify-center gap-2">
+		<span class="text-xs font-medium text-neutral-500">Brush:</span>
+		{#each COLORS as { hex, name } (hex)}
+			<button
+				class="h-7 w-7 rounded border-2 transition-transform hover:scale-110"
+				class:border-blue-500={brushColor === hex}
+				class:scale-110={brushColor === hex}
+				class:border-neutral-300={brushColor !== hex}
+				style="background-color: {hex}"
+				onclick={() => (brushColor = hex)}
+				aria-label="Select {name} brush"
+				title={name}
+			></button>
+		{/each}
+	</div>
+
+	<!-- Copy/Paste buttons -->
+	<div class="mb-4 flex items-center justify-center gap-2">
+		<button
+			class="rounded border border-neutral-300 px-3 py-1 text-xs hover:bg-neutral-100"
+			onclick={copyGrid}
+		>
+			📋 Copy Grid
+		</button>
+		<button
+			class="rounded border border-neutral-300 px-3 py-1 text-xs hover:bg-neutral-100"
+			onclick={pasteGrid}
+		>
+			📥 Paste Grid
+		</button>
+		{#if copyMessage}
+			<span class="text-xs text-neutral-500">{copyMessage}</span>
+		{/if}
+	</div>
+
+	<!-- Grid -->
 	<div class="mb-6 flex justify-center">
-		<div class="inline-grid grid-cols-8 overflow-hidden rounded border border-neutral-400">
+		<div
+			class="inline-grid touch-none grid-cols-8 overflow-hidden rounded border border-neutral-400"
+		>
 			{#each grid as color, i (i)}
 				{@const cellCursors = getCursorsForCell(i)}
 				<button
-					class="relative h-10 w-10 border border-neutral-300/50 transition-all
-						hover:z-10 hover:scale-110 sm:h-12 sm:w-12"
+					class="relative h-10 w-10 border border-neutral-300/50 sm:h-12 sm:w-12"
 					class:ring-2={selectedCell === i}
 					class:ring-blue-500={selectedCell === i}
 					class:z-20={selectedCell === i}
 					style="background-color: {color}"
-					onclick={() => (selectedCell = selectedCell === i ? null : i)}
-					onpointerenter={() => sendCursor(i)}
+					onpointerdown={(e) => onCellPointerDown(i, e)}
+					onpointerenter={() => onCellPointerEnter(i)}
 					onpointerleave={() => sendCursor(-1)}
+					onclick={() => (selectedCell = selectedCell === i ? null : i)}
 					aria-label="Cell {Math.floor(i / 8)},{i % 8}"
 				>
 					{#if cellCursors.length > 0}

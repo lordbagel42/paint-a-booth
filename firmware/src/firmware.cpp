@@ -44,8 +44,14 @@ const char *DEFAULT_GRID_ENDPOINT_URL = "https://rmrrf.raygen.dev/api/grid";
 const uint32_t DEFAULT_GRID_POLL_INTERVAL_MS = 1000;
 const uint32_t MIN_GRID_POLL_INTERVAL_MS = 100;
 const uint32_t MAX_GRID_POLL_INTERVAL_MS = 60000;
+const uint32_t SETTINGS_REFRESH_INTERVAL_MS = 20;
+const uint32_t WEBHOOK_RESPONSE_TIMEOUT_MS = 8000;
+const uint32_t WEBHOOK_CHUNK_GAP_MS = 200;
+const uint32_t GRID_COLOR_FADE_MS = 1000;
 
 const size_t GRID_ENDPOINT_URL_MAX_LEN = 128;
+const size_t GRID_PAYLOAD_MAX_LEN = 1024;
+const char *GRID_WEBHOOK_EVENT = "grid-fetch";
 
 const uint8_t RGB_TRIPLET_LEN = 11; // RRR.GGG.BBB
 const uint8_t PIXEL_SLOT_LEN = 12;  // RRR.GGG.BBB,
@@ -70,6 +76,11 @@ bool applyGridPayload(const char *payload);
 int parse3Digits(const char *digits);
 void refreshMirrorSettingsFromLedger();
 void applyBrightness(uint8_t brightnessValue);
+bool fetchGridPayloadHttp(const char *url, char *outPayload, size_t outPayloadSize);
+void onGridWebhookResponse(const char *event, const char *data);
+void finalizeWebhookPayloadIfComplete();
+void renderLoadingSpinner();
+void renderGridFadeTransition();
 
 Ledger ledSettings;
 bool mirrorXEnabled = DEFAULT_MIRROR_X;
@@ -81,6 +92,30 @@ uint32_t gridPollIntervalMs = DEFAULT_GRID_POLL_INTERVAL_MS;
 int gridPollIntervalState = (int)DEFAULT_GRID_POLL_INTERVAL_MS;
 uint8_t brightnessValue = DEFAULT_BRIGHTNESS;
 int brightnessState = DEFAULT_BRIGHTNESS;
+
+char webhookPayloadReadyBuffer[GRID_PAYLOAD_MAX_LEN] = {0};
+char webhookAssembleBuffer[GRID_PAYLOAD_MAX_LEN] = {0};
+size_t webhookAssembleLen = 0;
+bool webhookPayloadReady = false;
+bool webhookRequestInFlight = false;
+uint32_t webhookRequestMs = 0;
+uint32_t webhookLastChunkMs = 0;
+uint32_t lastSettingsRefreshMs = 0;
+bool hasReceivedGridPayload = false;
+uint32_t lastSpinnerFrameMs = 0;
+uint8_t spinnerFrame = 0;
+
+uint8_t gridCurrentR[PIXEL_COUNT] = {0};
+uint8_t gridCurrentG[PIXEL_COUNT] = {0};
+uint8_t gridCurrentB[PIXEL_COUNT] = {0};
+uint8_t gridStartR[PIXEL_COUNT] = {0};
+uint8_t gridStartG[PIXEL_COUNT] = {0};
+uint8_t gridStartB[PIXEL_COUNT] = {0};
+uint8_t gridTargetR[PIXEL_COUNT] = {0};
+uint8_t gridTargetG[PIXEL_COUNT] = {0};
+uint8_t gridTargetB[PIXEL_COUNT] = {0};
+bool gridFadeActive = false;
+uint32_t gridFadeStartMs = 0;
 
 // Adafruit_NeoPixel instance (Particle neopixel library exposes Adafruit_NeoPixel)
 Adafruit_NeoPixel strip(PIXEL_COUNT, PIXEL_PIN, PIXEL_TYPE);
@@ -99,14 +134,6 @@ void setup()
   }
   strip.show();
 
-  // Optional startup indicator until the first poll lands.
-  const uint32_t startupColor = strip.Color(180, 120, 255); // light purple
-  strip.setPixelColor(xyToIndex(3, 3), startupColor);
-  strip.setPixelColor(xyToIndex(3, 4), startupColor);
-  strip.setPixelColor(xyToIndex(4, 3), startupColor);
-  strip.setPixelColor(xyToIndex(4, 4), startupColor);
-  strip.show();
-
   // Cloud-to-device configuration ledger (keys: MIRROR_X, MIRROR_Y as 0/1)
   ledSettings = Particle.ledger("led-settings");
 
@@ -116,6 +143,9 @@ void setup()
   Particle.variable("pollMsState", gridPollIntervalState);
   Particle.variable("brightnessState", brightnessState);
 
+  // Webhook response listener for HTTPS polling path.
+  Particle.subscribe("hook-response/grid-fetch", onGridWebhookResponse, MY_DEVICES);
+
   // Ensure defaults are copied from constants into runtime fields.
   strncpy(gridEndpointUrl, DEFAULT_GRID_ENDPOINT_URL, sizeof(gridEndpointUrl) - 1);
   gridEndpointUrl[sizeof(gridEndpointUrl) - 1] = '\0';
@@ -124,8 +154,99 @@ void setup()
 // loop() runs over and over again, as quickly as it can execute.
 void loop()
 {
+  const uint32_t now = millis();
+  if (now - lastSettingsRefreshMs >= SETTINGS_REFRESH_INTERVAL_MS)
+  {
+    refreshMirrorSettingsFromLedger();
+    lastSettingsRefreshMs = now;
+  }
+
+  if (!hasReceivedGridPayload)
+  {
+    renderLoadingSpinner();
+  }
+  else
+  {
+    renderGridFadeTransition();
+  }
+
   pollGridStateOncePerSecond();
   delay(5);
+}
+
+void renderLoadingSpinner()
+{
+  const uint32_t now = millis();
+  const uint32_t frameIntervalMs = 70;
+  if (now - lastSpinnerFrameMs < frameIntervalMs)
+  {
+    return;
+  }
+  lastSpinnerFrameMs = now;
+
+  // 12-point circle around matrix center.
+  static const uint8_t spinnerX[] = {3, 4, 5, 6, 6, 5, 4, 3, 2, 1, 1, 2};
+  static const uint8_t spinnerY[] = {1, 1, 2, 3, 4, 5, 6, 6, 5, 4, 3, 2};
+  static const uint8_t spinnerLen = sizeof(spinnerX) / sizeof(spinnerX[0]);
+
+  // Clear frame.
+  for (int i = 0; i < PIXEL_COUNT; ++i)
+  {
+    strip.setPixelColor(i, 0);
+  }
+
+  // Draw head and a soft tail.
+  for (uint8_t t = 0; t < 4; ++t)
+  {
+    int idx = (int)spinnerFrame - (int)t;
+    while (idx < 0)
+    {
+      idx += spinnerLen;
+    }
+    idx %= spinnerLen;
+
+    // Light purple with fading tail intensity.
+    uint8_t v = (uint8_t)(200 - (t * 55));
+    uint32_t color = strip.Color(v, (uint8_t)(v * 2 / 3), v);
+    strip.setPixelColor(xyToIndex(spinnerX[idx], spinnerY[idx]), color);
+  }
+
+  strip.show();
+  spinnerFrame = (uint8_t)((spinnerFrame + 1) % spinnerLen);
+}
+
+void renderGridFadeTransition()
+{
+  if (!gridFadeActive)
+  {
+    return;
+  }
+
+  const uint32_t now = millis();
+  uint32_t elapsed = now - gridFadeStartMs;
+  if (elapsed > GRID_COLOR_FADE_MS)
+  {
+    elapsed = GRID_COLOR_FADE_MS;
+  }
+
+  for (int i = 0; i < PIXEL_COUNT; ++i)
+  {
+    int r = (int)gridStartR[i] + (((int)gridTargetR[i] - (int)gridStartR[i]) * (int)elapsed) / (int)GRID_COLOR_FADE_MS;
+    int g = (int)gridStartG[i] + (((int)gridTargetG[i] - (int)gridStartG[i]) * (int)elapsed) / (int)GRID_COLOR_FADE_MS;
+    int b = (int)gridStartB[i] + (((int)gridTargetB[i] - (int)gridStartB[i]) * (int)elapsed) / (int)GRID_COLOR_FADE_MS;
+
+    gridCurrentR[i] = (uint8_t)r;
+    gridCurrentG[i] = (uint8_t)g;
+    gridCurrentB[i] = (uint8_t)b;
+    strip.setPixelColor(i, strip.Color((uint8_t)r, (uint8_t)g, (uint8_t)b));
+  }
+
+  strip.show();
+
+  if (elapsed >= GRID_COLOR_FADE_MS)
+  {
+    gridFadeActive = false;
+  }
 }
 
 void pollGridStateOncePerSecond()
@@ -139,16 +260,68 @@ void pollGridStateOncePerSecond()
   }
   lastPollMs = now;
 
-  // Refresh orientation flags from cloud-to-device ledger.
-  refreshMirrorSettingsFromLedger();
-
   const char *payload = NULL;
 #if USE_MOCK_GRID
   payload = MOCK_GRID_PAYLOAD;
 #else
-  // TODO: perform HTTP GET to gridEndpointUrl and set payload to the response body.
-  // Example target response format: RRR.GGG.BBB,RRR.GGG.BBB,...
-  payload = NULL;
+  String endpoint(gridEndpointUrl);
+  endpoint.trim();
+
+  if (endpoint.startsWith("https://"))
+  {
+    finalizeWebhookPayloadIfComplete();
+
+    if (webhookPayloadReady)
+    {
+      payload = webhookPayloadReadyBuffer;
+      webhookPayloadReady = false;
+    }
+    else
+    {
+      if (!webhookRequestInFlight)
+      {
+        if (Particle.connected())
+        {
+          bool queued = Particle.publish(GRID_WEBHOOK_EVENT, endpoint, PRIVATE);
+          if (queued)
+          {
+            webhookRequestInFlight = true;
+            webhookRequestMs = now;
+          }
+          else
+          {
+            Log.warn("Failed to publish webhook request for %s", gridEndpointUrl);
+          }
+        }
+        else
+        {
+          Log.warn("Cloud disconnected; cannot request HTTPS grid via webhook");
+        }
+      }
+      else if (now - webhookRequestMs > WEBHOOK_RESPONSE_TIMEOUT_MS)
+      {
+        webhookRequestInFlight = false;
+        webhookAssembleLen = 0;
+        webhookAssembleBuffer[0] = '\0';
+        Log.warn("Webhook response timeout for %s", gridEndpointUrl);
+      }
+
+      // Wait for webhook payload, skip parse/warn this cycle.
+      return;
+    }
+  }
+  else
+  {
+    static char livePayload[GRID_PAYLOAD_MAX_LEN];
+    if (fetchGridPayloadHttp(gridEndpointUrl, livePayload, sizeof(livePayload)))
+    {
+      payload = livePayload;
+    }
+    else
+    {
+      payload = NULL;
+    }
+  }
 #endif
 
   const bool parsedOk = applyGridPayload(payload);
@@ -161,6 +334,235 @@ void pollGridStateOncePerSecond()
     Log.warn("Grid payload parse failed (source: live HTTP for %s)", gridEndpointUrl);
 #endif
   }
+}
+
+void onGridWebhookResponse(const char *event, const char *data)
+{
+  if (data == NULL)
+  {
+    return;
+  }
+
+  int chunkIndex = -1;
+  if (event != NULL)
+  {
+    const char *lastSlash = strrchr(event, '/');
+    if (lastSlash != NULL && *(lastSlash + 1) != '\0')
+    {
+      bool numeric = true;
+      for (const char *p = lastSlash + 1; *p != '\0'; ++p)
+      {
+        if (*p < '0' || *p > '9')
+        {
+          numeric = false;
+          break;
+        }
+      }
+      if (numeric)
+      {
+        chunkIndex = atoi(lastSlash + 1);
+      }
+    }
+  }
+
+  // New chunked response starts at /0.
+  if (chunkIndex == 0)
+  {
+    webhookAssembleLen = 0;
+    webhookAssembleBuffer[0] = '\0';
+  }
+
+  size_t incomingLen = strlen(data);
+  if (incomingLen == 0)
+  {
+    return;
+  }
+
+  size_t remaining = GRID_PAYLOAD_MAX_LEN - 1 - webhookAssembleLen;
+  if (incomingLen > remaining)
+  {
+    incomingLen = remaining;
+  }
+
+  if (incomingLen > 0)
+  {
+    memcpy(&webhookAssembleBuffer[webhookAssembleLen], data, incomingLen);
+    webhookAssembleLen += incomingLen;
+    webhookAssembleBuffer[webhookAssembleLen] = '\0';
+    webhookLastChunkMs = millis();
+  }
+
+  // Unchunked webhook response arrives as a single event without /N suffix.
+  if (chunkIndex < 0)
+  {
+    strncpy(webhookPayloadReadyBuffer, webhookAssembleBuffer, sizeof(webhookPayloadReadyBuffer) - 1);
+    webhookPayloadReadyBuffer[sizeof(webhookPayloadReadyBuffer) - 1] = '\0';
+    webhookPayloadReady = true;
+    webhookRequestInFlight = false;
+    webhookAssembleLen = 0;
+    webhookAssembleBuffer[0] = '\0';
+  }
+}
+
+void finalizeWebhookPayloadIfComplete()
+{
+  if (webhookAssembleLen == 0)
+  {
+    return;
+  }
+
+  if (millis() - webhookLastChunkMs < WEBHOOK_CHUNK_GAP_MS)
+  {
+    return;
+  }
+
+  strncpy(webhookPayloadReadyBuffer, webhookAssembleBuffer, sizeof(webhookPayloadReadyBuffer) - 1);
+  webhookPayloadReadyBuffer[sizeof(webhookPayloadReadyBuffer) - 1] = '\0';
+  webhookPayloadReady = true;
+  webhookRequestInFlight = false;
+  webhookAssembleLen = 0;
+  webhookAssembleBuffer[0] = '\0';
+}
+
+bool fetchGridPayloadHttp(const char *url, char *outPayload, size_t outPayloadSize)
+{
+  if (url == NULL || outPayload == NULL || outPayloadSize < 2)
+  {
+    return false;
+  }
+
+  outPayload[0] = '\0';
+
+  String urlStr(url);
+  urlStr.trim();
+
+  if (urlStr.length() == 0)
+  {
+    return false;
+  }
+
+  // Particle TCPClient does not support TLS/SSL directly.
+  if (urlStr.startsWith("https://"))
+  {
+    Log.warn("HTTPS URL not supported by direct device polling: %s", url);
+    return false;
+  }
+
+  String working = urlStr;
+  if (working.startsWith("http://"))
+  {
+    working = working.substring(7);
+  }
+
+  int slashPos = working.indexOf('/');
+  String hostPort = (slashPos >= 0) ? working.substring(0, slashPos) : working;
+  String path = (slashPos >= 0) ? working.substring(slashPos) : String("/");
+
+  int port = 80;
+  int colonPos = hostPort.indexOf(':');
+  String host = hostPort;
+  if (colonPos >= 0)
+  {
+    host = hostPort.substring(0, colonPos);
+    int parsedPort = hostPort.substring(colonPos + 1).toInt();
+    if (parsedPort > 0)
+    {
+      port = parsedPort;
+    }
+  }
+
+  host.trim();
+  if (host.length() == 0)
+  {
+    return false;
+  }
+
+  TCPClient client;
+  if (!client.connect(host.c_str(), (uint16_t)port))
+  {
+    Log.warn("HTTP connect failed: %s:%d", host.c_str(), port);
+    return false;
+  }
+
+  client.print("GET ");
+  client.print(path);
+  client.println(" HTTP/1.1");
+  client.print("Host: ");
+  client.println(host);
+  client.println("Connection: close");
+  client.println("Accept: text/plain");
+  client.println("User-Agent: paint-a-booth/1.0");
+  client.println();
+
+  String response;
+  uint32_t start = millis();
+  const uint32_t timeoutMs = 5000;
+  while (millis() - start < timeoutMs)
+  {
+    while (client.available())
+    {
+      response += (char)client.read();
+      start = millis();
+    }
+
+    if (!client.connected())
+    {
+      break;
+    }
+    delay(1);
+  }
+  client.stop();
+
+  if (response.length() == 0)
+  {
+    Log.warn("HTTP response empty from %s", url);
+    return false;
+  }
+
+  // Basic status check: first line should include 200.
+  int statusLineEnd = response.indexOf('\n');
+  if (statusLineEnd < 0)
+  {
+    return false;
+  }
+  String statusLine = response.substring(0, statusLineEnd);
+  if (statusLine.indexOf(" 200 ") < 0)
+  {
+    Log.warn("HTTP non-200 response: %s", statusLine.c_str());
+    return false;
+  }
+
+  int bodyPos = response.indexOf("\r\n\r\n");
+  if (bodyPos < 0)
+  {
+    bodyPos = response.indexOf("\n\n");
+    if (bodyPos < 0)
+    {
+      return false;
+    }
+    bodyPos += 2;
+  }
+  else
+  {
+    bodyPos += 4;
+  }
+
+  String body = response.substring(bodyPos);
+  body.trim();
+  if (body.length() == 0)
+  {
+    return false;
+  }
+
+  if (body.length() >= (int)outPayloadSize)
+  {
+    Log.warn("Grid payload too large: %d bytes (max %d)", body.length(), (int)(outPayloadSize - 1));
+    return false;
+  }
+
+  strncpy(outPayload, body.c_str(), outPayloadSize - 1);
+  outPayload[outPayloadSize - 1] = '\0';
+  return true;
 }
 
 void refreshMirrorSettingsFromLedger()
@@ -244,10 +646,15 @@ bool applyGridPayload(const char *payload)
     return false;
   }
 
-  // Default to black if payload has fewer than PIXEL_COUNT entries.
+  // Capture current displayed frame as fade start and clear targets to black.
   for (int i = 0; i < PIXEL_COUNT; ++i)
   {
-    strip.setPixelColor(i, 0);
+    gridStartR[i] = gridCurrentR[i];
+    gridStartG[i] = gridCurrentG[i];
+    gridStartB[i] = gridCurrentB[i];
+    gridTargetR[i] = 0;
+    gridTargetG[i] = 0;
+    gridTargetB[i] = 0;
   }
 
   uint16_t visualPixel = 0;
@@ -275,7 +682,10 @@ bool applyGridPayload(const char *payload)
 
     const uint8_t x = visualPixel % MATRIX_WIDTH;
     const uint8_t y = visualPixel / MATRIX_WIDTH;
-    strip.setPixelColor(xyToIndex(x, y), strip.Color((uint8_t)r, (uint8_t)g, (uint8_t)b));
+    uint16_t p = xyToIndex(x, y);
+    gridTargetR[p] = (uint8_t)r;
+    gridTargetG[p] = (uint8_t)g;
+    gridTargetB[p] = (uint8_t)b;
 
     visualPixel++;
 
@@ -291,7 +701,10 @@ bool applyGridPayload(const char *payload)
     }
   }
 
-  strip.show();
+  gridFadeStartMs = millis();
+  gridFadeActive = true;
+  renderGridFadeTransition();
+  hasReceivedGridPayload = true;
   return true;
 }
 
