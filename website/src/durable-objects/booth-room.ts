@@ -13,12 +13,17 @@ const VALID_COLORS = [
 
 interface Attachment {
 	clientId: string;
+	userId?: string;
+	userName?: string;
 	color: string;
 }
 
 export class BoothRoom extends DurableObject {
 	private votes = new Map<number, Map<string, number>>();
-	private cursors = new Map<WebSocket, { clientId: string; x: number; y: number; color: string }>();
+	private cursors = new Map<
+		WebSocket,
+		{ clientId: string; userId?: string; userName?: string; x: number; y: number; color: string }
+	>();
 	private initialized = false;
 
 	constructor(ctx: DurableObjectState, env: Env) {
@@ -124,9 +129,13 @@ export class BoothRoom extends DurableObject {
 			return new Response('Expected WebSocket', { status: 426 });
 		}
 
+		const userName = url.searchParams.get('userName') || undefined;
+		const userId = url.searchParams.get('userId') || undefined;
+
 		const pair = new WebSocketPair();
 		const [client, server] = Object.values(pair);
 		this.ctx.acceptWebSocket(server);
+		server.serializeAttachment({ clientId: '', userId, userName, color: '' });
 
 		this.loadVotes();
 		server.send(
@@ -154,13 +163,18 @@ export class BoothRoom extends DurableObject {
 			const clientId = String(data.clientId ?? '');
 			const color = String(data.color ?? '');
 			if (!clientId) return;
-			const attachment: Attachment = { clientId, color };
+			const prev = ws.deserializeAttachment() as Attachment | null;
+			const userId = prev?.userId;
+			const userName = prev?.userName || String(data.userName ?? '') || undefined;
+			const attachment: Attachment = { clientId, userId, userName, color };
 			ws.serializeAttachment(attachment);
-			this.cursors.set(ws, { clientId, x: -1, y: -1, color });
+			this.cursors.set(ws, { clientId, userId, userName, x: -1, y: -1, color });
 			return;
 		}
 
 		if (data.type === 'vote') {
+			const cursor = this.cursors.get(ws);
+			if (!cursor?.userId) return;
 			const cellIndex = Number(data.cellIndex);
 			const color = String(data.color ?? '');
 			const direction = Number(data.direction);
@@ -211,13 +225,14 @@ export class BoothRoom extends DurableObject {
 			const y = Number(data.y);
 			if (isNaN(x) || isNaN(y)) return;
 			const cursor = this.cursors.get(ws);
-			if (!cursor) return;
+			if (!cursor?.userId) return;
 			cursor.x = x;
 			cursor.y = y;
 			this.broadcast(
 				JSON.stringify({
 					type: 'cursor',
 					clientId: cursor.clientId,
+					userName: cursor.userName,
 					x,
 					y,
 					color: cursor.color

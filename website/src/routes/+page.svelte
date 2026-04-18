@@ -18,7 +18,7 @@
 	let grid: string[] = $state(data.grid);
 	let voteData: Record<number, Record<string, number>> = $state(data.voteData);
 	let selectedCell: number | null = $state(null);
-	let cursors = new SvelteMap<string, { x: number; y: number; color: string }>();
+	let cursors = new SvelteMap<string, { x: number; y: number; color: string; userName?: string }>();
 	let ws: WebSocket | null = $state(null);
 	let connected = $state(false);
 	const clientId = crypto.randomUUID().slice(0, 8);
@@ -48,7 +48,9 @@
 
 		socket.addEventListener('open', () => {
 			connected = true;
-			socket.send(JSON.stringify({ type: 'join', clientId, color: cursorColor }));
+			socket.send(
+				JSON.stringify({ type: 'join', clientId, color: cursorColor, userName: data.user?.name })
+			);
 		});
 
 		socket.addEventListener('message', (event) => {
@@ -67,7 +69,7 @@
 			}
 
 			if (msg.type === 'cursor') {
-				cursors.set(msg.clientId, { x: msg.x, y: msg.y, color: msg.color });
+				cursors.set(msg.clientId, { x: msg.x, y: msg.y, color: msg.color, userName: msg.userName });
 			}
 
 			if (msg.type === 'leave') {
@@ -89,15 +91,22 @@
 	}
 
 	function vote(cellIndex: number, color: string, direction: number) {
+		if (!data.user) return;
 		if (!voteData[cellIndex]) voteData[cellIndex] = {};
 		const prev = voteData[cellIndex][color] ?? 0;
 		voteData[cellIndex][color] = prev + direction;
 		grid[cellIndex] = getWinner(cellIndex);
 		ws?.send(JSON.stringify({ type: 'vote', cellIndex, color, direction }));
+		fetch('/api/vote-log', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ cellIndex, color, direction })
+		});
 	}
 	let gridEl: HTMLDivElement | undefined = $state();
 	let lastCursorSend = 0;
 	function sendCursor(e: PointerEvent) {
+		if (!data.user) return;
 		const now = Date.now();
 		if (now - lastCursorSend < 33) return;
 		if (!gridEl) return;
@@ -145,7 +154,10 @@
 					class:border-white={selectedCell === i}
 					class:z-20={selectedCell === i}
 					style="background-color: {color}"
-					onclick={() => (selectedCell = selectedCell === i ? null : i)}
+					onclick={() => {
+						if (!data.user) return;
+						selectedCell = selectedCell === i ? null : i;
+					}}
 					aria-label="Cell {Math.floor(i / 8)},{i % 8}"
 				></button>
 			{/each}
@@ -175,7 +187,7 @@
 						</svg>
 						<span
 							class="absolute top-4 left-3 px-1 py-px font-mono text-[8px] whitespace-nowrap text-white"
-							style="background-color: {cursor.color}">{id.slice(0, 4)}</span
+							style="background-color: {cursor.color}">{cursor.userName || id.slice(0, 4)}</span
 						>
 					</div>
 				{/if}
