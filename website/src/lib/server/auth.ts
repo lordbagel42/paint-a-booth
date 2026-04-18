@@ -21,7 +21,23 @@ export function getAuth() {
 						discoveryUrl: 'https://auth.hackclub.com/.well-known/openid-configuration',
 						clientId: env.HACKCLUB_CLIENT_ID!,
 						clientSecret: env.HACKCLUB_CLIENT_SECRET!,
-						scopes: ['openid', 'email', 'name']
+						scopes: ['openid', 'profile'],
+						async getUserInfo(tokens) {
+							const res = await fetch('https://auth.hackclub.com/oauth/userinfo', {
+								headers: {
+									Authorization: `Bearer ${tokens.accessToken}`
+								}
+							});
+							if (!res.ok) return null;
+							const data = await res.json();
+							return {
+								id: data.sub,
+								name: data.name || data.preferred_username || 'Unknown',
+								email: data.email || `${data.sub}@hackclub.user`,
+								emailVerified: !!data.email_verified,
+								image: data.picture
+							};
+						}
 					}
 				]
 			}),
