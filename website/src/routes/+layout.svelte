@@ -1,8 +1,18 @@
 <script lang="ts">
 	import './layout.css';
 	import favicon from '$lib/assets/favicon.svg';
+	import { authClient } from '$lib/auth-client';
+	import { invalidateAll } from '$app/navigation';
 
 	let { data, children } = $props();
+
+	async function login() {
+		await authClient.signIn.social({ provider: 'hackclub', callbackURL: '/' });
+	}
+
+	async function logout() {
+		await authClient.signOut({ fetchOptions: { onSuccess: () => invalidateAll() } });
+	}
 </script>
 
 <svelte:head><link rel="icon" href={favicon} /></svelte:head>
@@ -11,14 +21,11 @@
 	<header class="flex items-center justify-between px-4 py-2 text-sm">
 		{#if data.user}
 			<span class="font-medium">{data.user.name}</span>
-			<a href="/api/auth/sign-out" rel="external" class="text-neutral-500 hover:underline">Logout</a
-			>
+			<button class="text-neutral-500 hover:underline" onclick={logout}>Logout</button>
 		{:else}
 			<span></span>
-			<a
-				href="/api/auth/sign-in/social?provider=hackclub"
-				rel="external"
-				class="rounded bg-blue-600 px-3 py-1 text-white hover:bg-blue-700">Login with Hack Club</a
+			<button class="rounded bg-blue-600 px-3 py-1 text-white hover:bg-blue-700" onclick={login}
+				>Login with Hack Club</button
 			>
 		{/if}
 	</header>
