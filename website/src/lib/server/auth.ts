@@ -21,7 +21,7 @@ export function getAuth() {
 						discoveryUrl: 'https://auth.hackclub.com/.well-known/openid-configuration',
 						clientId: env.HACKCLUB_CLIENT_ID!,
 						clientSecret: env.HACKCLUB_CLIENT_SECRET!,
-						scopes: ['openid', 'profile'],
+						scopes: ['openid', 'profile', 'email'],
 						async getUserInfo(tokens) {
 							const res = await fetch('https://auth.hackclub.com/oauth/userinfo', {
 								headers: {

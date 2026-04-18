@@ -7,7 +7,7 @@
 	let { data, children } = $props();
 
 	async function login() {
-		await authClient.signIn.social({ provider: 'hackclub', callbackURL: '/' });
+		await authClient.signIn.oauth2({ providerId: 'hackclub', callbackURL: '/' });
 	}
 
 	async function logout() {
